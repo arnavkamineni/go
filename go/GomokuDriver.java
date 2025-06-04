@@ -4,7 +4,6 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
-import java.util.ArrayList;
 import java.util.List;
 
 public class GomokuDriver {
@@ -16,6 +15,7 @@ public class GomokuDriver {
         });
     }
 }
+
 
 @SuppressWarnings("serial")
 class IntroFrame extends JFrame {
@@ -91,7 +91,8 @@ class IntroFrame extends JFrame {
         startBtn = new JButton("Start Game");
         startBtn.setFont(new Font("SansSerif", Font.BOLD, 18));
         startBtn.setBackground(new Color(0, 51, 102));
-        startBtn.setForeground(Color.WHITE);
+        // Change text to BLACK for higher contrast against the dark‐blue background
+        startBtn.setForeground(Color.BLACK);
         startBtn.setFocusPainted(false);
         startBtn.setPreferredSize(new Dimension(200, 50));
         startBtn.addActionListener(e -> launchGame());
@@ -117,11 +118,12 @@ class IntroFrame extends JFrame {
     private void launchGame() {
         int size = sizeCombo.getSelectedIndex() == 1 ? 19 : 15;
         int difficulty = difficultyCombo.getSelectedIndex();
-        boolean playerFirst = firstCombo.getSelectedIndex() == 0;
+        boolean aiFirst = firstCombo.getSelectedIndex() == 0;
         dispose();
-        new GomokuUI(size, difficulty, playerFirst).setVisible(true);
+        new GomokuUI(size, difficulty, aiFirst).setVisible(true);
     }
 }
+
 
 @SuppressWarnings("serial")
 class GomokuUI extends JFrame {
@@ -131,12 +133,16 @@ class GomokuUI extends JFrame {
     private JButton restartBtn;
     private JButton hintBtn;
     private JLabel statusLabel;
+    private JProgressBar aiProgress;
     private final int difficulty;
-    private final boolean playerFirst;
+    private final boolean aiFirst;
+    private final boolean aiIsWhite;
 
-    public GomokuUI(int size, int difficulty, boolean playerFirst) {
+    public GomokuUI(int size, int difficulty, boolean aiFirst) {
         this.difficulty = difficulty;
-        this.playerFirst = playerFirst;
+        this.aiFirst = aiFirst;
+        this.aiIsWhite = !aiFirst; // AI is White if Player goes first
+
         setTitle("Gomoku");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setSize(700, 800);
@@ -165,19 +171,29 @@ class GomokuUI extends JFrame {
     }
 
     private void initComponents() {
+        // Top panel: Restart, Hint, and AI spinner
         JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 10));
         topPanel.setBackground(new Color(240, 248, 255));
+
         restartBtn = new JButton("Restart");
         styleActionButton(restartBtn);
         restartBtn.addActionListener(e -> {
             dispose();
             new IntroFrame().setVisible(true);
         });
+        topPanel.add(restartBtn);
+
         hintBtn = new JButton("Hint");
         styleActionButton(hintBtn);
         hintBtn.addActionListener(e -> showHint());
-        topPanel.add(restartBtn);
         topPanel.add(hintBtn);
+
+        aiProgress = new JProgressBar();
+        aiProgress.setIndeterminate(true);
+        aiProgress.setVisible(false);
+        aiProgress.setPreferredSize(new Dimension(100, 20));
+        topPanel.add(aiProgress);
+
         add(topPanel, BorderLayout.NORTH);
 
         boardPanel = new BoardPanel();
@@ -193,29 +209,30 @@ class GomokuUI extends JFrame {
     private void styleActionButton(JButton b) {
         b.setFont(new Font("SansSerif", Font.BOLD, 16));
         b.setBackground(new Color(0, 51, 102));
-        b.setForeground(Color.WHITE);
+        // Make the text BLACK for stronger contrast against the dark‐blue button
+        b.setForeground(Color.BLACK);
         b.setFocusPainted(false);
         b.setPreferredSize(new Dimension(100, 40));
     }
 
     private void startNewGame(int size) {
         board = new Board(size);
-        ai = new Minimax(board, !playerFirst, difficulty);
+        ai = new Minimax(board, aiIsWhite, difficulty);
         boardPanel.resetHint();
         boardPanel.setBoard(board);
 
-        int center = size/2;
-        if (playerFirst) {
-            // player is black and goes first
-            board.addStone(center, center, false);
-            statusLabel.setText("AI (Black) started. Your (White) turn");
-        } else {
-            // AI starts
+        final int center = size / 2;
+
+        if (aiFirst) {
+            // AI (Black) places opening move at center
             board.addStone(center, center, false);
             boardPanel.repaint();
             statusLabel.setText("Your (White) turn");
-            SwingUtilities.invokeLater(this::aiMove);
+        } else {
+            // Player (Black) goes first—wait for click
+            statusLabel.setText("Your (Black) turn");
         }
+
         boardPanel.repaint();
     }
 
@@ -224,39 +241,71 @@ class GomokuUI extends JFrame {
         int cell = boardPanel.pixelToCell(x, y);
         if (cell < 0) return;
         int row = cell / board.getSize(), col = cell % board.getSize();
-        // only allow user move on empty
-        if (!board.addStone(col, row, playerFirst)) return;
+
+        // Determine human color: if aiIsWhite, human is Black (white=false); else human is White
+        boolean humanIsWhite = !aiIsWhite;
+        if (!board.addStone(col, row, humanIsWhite)) return;
+
         boardPanel.resetHint();
         boardPanel.repaint();
-        if (board.checkWin(col, row, playerFirst)) {
+
+        // Check for human win
+        if (board.checkWin(col, row, humanIsWhite)) {
             statusLabel.setText("You win!");
             return;
         }
+
+        // Now AI’s turn
         statusLabel.setText("AI is thinking...");
+        aiProgress.setVisible(true);
+
         SwingUtilities.invokeLater(this::aiMove);
     }
 
     private void aiMove() {
-        int depth = difficulty == 0 ? 3 : difficulty == 1 ? 4 : 6;
+        int depth;
+        if (difficulty == 0) depth = 3;
+        else if (difficulty == 1) depth = 4;
+        else /* Impossible */ depth = 5;
+
         int[] move = ai.calculateNextMove(depth);
-        if (move != null) board.addStone(move[1], move[0], !playerFirst);
+        if (move != null) {
+            // move[0] = row, move[1] = col; AI color = aiIsWhite
+            board.addStone(move[1], move[0], aiIsWhite);
+        }
         boardPanel.repaint();
-        if (board.checkWinLast()) statusLabel.setText("AI wins!");
-        else statusLabel.setText("Your turn");
+
+        aiProgress.setVisible(false);
+
+        // Check for AI win
+        if (board.checkWinLast()) {
+            statusLabel.setText("AI wins!");
+        } else {
+            // Back to human turn
+            if (aiIsWhite) {
+                statusLabel.setText("Your (Black) turn");
+            } else {
+                statusLabel.setText("Your (White) turn");
+            }
+        }
     }
 
     private void showHint() {
         if (board.checkWinLast()) return;
-        int[] hint = ai.calculateNextMove(3);
-        if (hint != null) {
-            int row=hint[0],col=hint[1];
-            if (board.getBoardMatrix()[row][col]!=0) {
-                List<int[]> mvs = board.generateMoves();
-                if (!mvs.isEmpty()) { row=mvs.get(0)[0]; col=mvs.get(0)[1]; }
+        aiProgress.setVisible(true);
+        SwingUtilities.invokeLater(() -> {
+            int[] hint = ai.calculateNextMove(3);
+            if (hint != null) {
+                int row = hint[0], col = hint[1];
+                if (board.getBoardMatrix()[row][col] != 0) {
+                    List<int[]> mvs = board.generateMoves();
+                    if (!mvs.isEmpty()) { row = mvs.get(0)[0]; col = mvs.get(0)[1]; }
+                }
+                boardPanel.setHintCell(row, col);
             }
-            boardPanel.setHintCell(row,col);
             boardPanel.repaint();
-        }
+            aiProgress.setVisible(false);
+        });
     }
 
     class BoardPanel extends JPanel {
@@ -325,9 +374,7 @@ class GomokuUI extends JFrame {
             return new Point(10 + col*cs + cs/2, 10 + row*cs + cs/2);
         }
     }
-
 }
-
 
 /**
  * Manages board state and win logic
@@ -335,7 +382,9 @@ class GomokuUI extends JFrame {
 class Board {
     private int size;
     private int[][] matrix;
-    private int lastX, lastY;
+
+    // initialize to “no move yet”
+    private int lastX = -1, lastY = -1;
 
     public Board(int size) {
         this.size = size;
@@ -347,10 +396,13 @@ class Board {
         this.matrix = new int[size][size];
         for (int i = 0; i < size; i++)
             System.arraycopy(other.matrix[i], 0, this.matrix[i], 0, size);
+        // copy lastX/lastY as well
+        this.lastX = other.lastX;
+        this.lastY = other.lastY;
     }
 
-    public int getSize() {return size;}
-    public int[][] getBoardMatrix() {return matrix;}
+    public int getSize() { return size; }
+    public int[][] getBoardMatrix() { return matrix; }
 
     public boolean addStone(int x, int y, boolean white) {
         if (x < 0 || y < 0 || x >= size || y >= size || matrix[y][x] != 0) return false;
@@ -360,20 +412,21 @@ class Board {
         return true;
     }
 
-    public void thinkingStarted() {}
-    public void thinkingFinished() {}
-
-    public void addStoneNoGUI(int x, int y, boolean black) {addStone(x, y, !black);}
-    public void removeStoneNoGUI(int x, int y) {matrix[y][x] = 0;}
+    public boolean checkWinLast() {
+        if (lastX < 0 || lastY < 0) return false;
+        int t = matrix[lastY][lastX];
+        return Check.win(matrix, lastX, lastY, t);
+    }
 
     public boolean checkWin(int x, int y, boolean white) {
         return Check.win(matrix, x, y, white ? 1 : 2);
     }
-    public boolean checkWinLast() {
-        return Check.win(matrix, lastX, lastY, matrix[lastY][lastX]);
-    }
 
-    public List<int[]> generateMoves() {return Check.generateMoves(matrix);}
+    public List<int[]> generateMoves() { return Check.generateMoves(matrix); }
+    public void thinkingStarted() {}
+    public void thinkingFinished() {}
+    public void addStoneNoGUI(int x, int y, boolean black) { addStone(x, y, !black); }
+    public void removeStoneNoGUI(int x, int y) { matrix[y][x] = 0; }
 }
 
 /**
@@ -398,8 +451,8 @@ class Check {
         }
         return c;
     }
-    public static ArrayList<int[]> generateMoves(int[][] m) {
-        ArrayList<int[]> moves = new ArrayList<>();
+    public static java.util.ArrayList<int[]> generateMoves(int[][] m) {
+        java.util.ArrayList<int[]> moves = new java.util.ArrayList<>();
         int n = m.length;
         boolean[][] seen = new boolean[n][n];
         for (int r = 0; r < n; r++) for (int c = 0; c < n; c++) if (m[r][c] != 0) {
@@ -413,5 +466,4 @@ class Check {
         if (moves.isEmpty()) moves.add(new int[]{n/2,n/2});
         return moves;
     }
-
 }
